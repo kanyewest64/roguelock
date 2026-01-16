@@ -16,7 +16,7 @@ local WHITELIST = {
     ["A6A3A223-9F8F-432D-B9CD-30F94B58C6C3"] = true,
     ["ED3BCC12-098C-45EB-B268-85D54DE3ECBC"] = true,
     ["7E16E9B2-6037-4385-AAAD-CA35F60AA029"] = true,
-    ["2ACE22EF-8F57-4432-97A0-28D708BEC3CF"] = true,
+    ["2ACE22EF-8F57-4432-97A0-28D708BEO3CF"] = true,
 }
 
 -- ========================================
